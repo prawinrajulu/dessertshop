@@ -5,7 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>The Dessert Carnival | Premium Brownies</title>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700;900&family=Josefin+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyB41DRUbKWJHPxaFjMAwdrzWzbVKartNGg&libraries=places,geometry&callback=initMapGlobal" async defer></script>
+    <!-- Leaflet OpenStreetMap -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -189,77 +191,73 @@
 
     window.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => {
-            document.getElementById('loader').style.opacity = '0';
-            setTimeout(() => {
-                document.getElementById('loader').classList.add('hidden');
-            }, 500);
+            const loader = document.getElementById('loader');
+            if (loader) {
+                loader.style.opacity = '0';
+                setTimeout(() => loader.classList.add('hidden'), 500);
+            }
         }, 1200);
     });
 
-    window.gm_authFailure = function() {
-        console.warn('Google Maps API failed to authenticate. Switching to manual address entry.');
-        mapsAvailable = false;
-        const mapDiv = document.getElementById('map-preview');
-        if (mapDiv) {
-            mapDiv.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-dim);font-size:0.8rem;text-align:center;padding:1rem;background:var(--bg);border:1px dashed var(--gold-dim);border-radius:8px;">Map preview unavailable.<br>Please enter address manually below.</div>';
-        }
-    };
-
-    window.initMapGlobal = function() { 
-        try {
-            if (document.getElementById('map-preview')) initMapWidget();
-        } catch (e) {
-            console.error('Map initialization error:', e);
-            window.gm_authFailure();
-        }
-    };
-
-    function initMapWidget() {
-        if (!window.google || !window.google.maps) {
-            window.gm_authFailure();
-            return;
-        }
+    function initLeafletMap() {
         const mapDiv = document.getElementById('map-preview');
         if (!mapDiv) return;
+        
+        // Use default coords if none set
+        const lat = userLocation.lat || 13.0827;
+        const lng = userLocation.lng || 80.2707;
+
         try {
-            mapInstance = new google.maps.Map(mapDiv, { center: userLocation, zoom: 12 });
-            marker = new google.maps.Marker({ position: userLocation, map: mapInstance, draggable: true });
-            marker.addListener('dragend', () => {
-                const pos = marker.getPosition();
-                userLocation.lat = pos.lat();
-                userLocation.lng = pos.lng();
-                reverseGeocode(pos.lat(), pos.lng());
+            if (mapInstance) { mapInstance.remove(); }
+            
+            mapInstance = L.map('map-preview').setView([lat, lng], 13);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(mapInstance);
+
+            marker = L.marker([lat, lng], { draggable: true }).addTo(mapInstance);
+            
+            marker.on('dragend', function() {
+                const pos = marker.getLatLng();
+                userLocation.lat = pos.lat;
+                userLocation.lng = pos.lng;
+                reverseGeocodeOSM(pos.lat, pos.lng);
             });
-            const input = document.getElementById('location-input');
-            if (input) {
-                const autocomplete = new google.maps.places.Autocomplete(input, { types: ['geocode'] });
-                autocomplete.addListener('place_changed', () => {
-                    const place = autocomplete.getPlace();
-                    if (place.geometry) {
-                        userLocation.lat = place.geometry.location.lat();
-                        userLocation.lng = place.geometry.location.lng();
-                        userLocation.address = place.formatted_address;
-                        mapInstance.setCenter(place.geometry.location);
-                        marker.setPosition(place.geometry.location);
-                        input.value = userLocation.address;
-                    }
-                });
-            }
-        } catch (err) {
-            console.error('Maps initialization failed', err);
-            window.gm_authFailure();
+
+            // Map click support
+            mapInstance.on('click', function(e) {
+                marker.setLatLng(e.latlng);
+                userLocation.lat = e.latlng.lat;
+                userLocation.lng = e.latlng.lng;
+                reverseGeocodeOSM(e.latlng.lat, e.latlng.lng);
+            });
+
+            // Fix for hidden container initialization
+            setTimeout(() => {
+                if (mapInstance) mapInstance.invalidateSize();
+            }, 250);
+
+        } catch (e) {
+            console.error('Leaflet initialization failed', e);
+            mapDiv.innerHTML = '<div style="padding:1rem;color:var(--text-dim);text-align:center;">Failed to load map. Please enter address manually.</div>';
         }
     }
 
-    function reverseGeocode(lat, lng) {
-        const geocoder = new google.maps.Geocoder();
-        geocoder.geocode({ location: { lat, lng } }, (results) => {
-            if (results[0]) {
-                userLocation.address = results[0].formatted_address;
+    async function reverseGeocodeOSM(lat, lng) {
+        try {
+            const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`;
+            const response = await fetch(url, {
+                headers: { 'User-Agent': 'TheDessertCarnival/1.0' }
+            });
+            const data = await response.json();
+            if (data.display_name) {
+                userLocation.address = data.display_name;
                 const input = document.getElementById('location-input');
-                if (input) input.value = userLocation.address;
+                if (input) input.value = data.display_name;
             }
-        });
+        } catch (e) {
+            console.error('Reverse geocoding failed', e);
+        }
     }
 
     function switchAuthTab(tab) {
@@ -395,15 +393,11 @@
         `;
         setTimeout(() => { 
             if (document.getElementById('location-input')) {
-                if (window.google && mapsAvailable) {
-                    initMapWidget(); 
-                } else {
-                    window.gm_authFailure();
-                }
+                initLeafletMap();
                 const inp = document.getElementById('location-input');
                 if (inp && inp.value) userLocation.address = inp.value;
             }
-        }, 100);
+        }, 300);
     }
 
     function removeFromCart(id) { cart = cart.filter(x => x.id !== id); updateCartCount(); renderCart(); }
