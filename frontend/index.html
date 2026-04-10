@@ -161,8 +161,7 @@
     
     let currentUser = null;
     let isAdmin = false;
-    let cart = [];
-    let currentFilter = 'all';
+    let mapsAvailable = true;
     let selectedPayment = 'online';
     let userLocation = { address: '', lat: 13.0827, lng: 80.2707 };
     let mapInstance = null;
@@ -197,6 +196,7 @@
 
     window.gm_authFailure = function() {
         console.warn('Google Maps API failed to authenticate. Switching to manual address entry.');
+        mapsAvailable = false;
         const mapDiv = document.getElementById('map-preview');
         if (mapDiv) {
             mapDiv.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-dim);font-size:0.8rem;text-align:center;padding:1rem;background:var(--bg);border:1px dashed var(--gold-dim);border-radius:8px;">Map preview unavailable.<br>Please enter address manually below.</div>';
@@ -391,7 +391,17 @@
                 ${selectedPayment === 'online' ? 'Proceed to Pay ₹' + total : 'Confirm COD Order ₹' + total}
             </button>
         `;
-        setTimeout(() => { if (document.getElementById('location-input') && window.google) { initMapWidget(); const inp = document.getElementById('location-input'); if (inp.value) userLocation.address = inp.value; } }, 100);
+        setTimeout(() => { 
+            if (document.getElementById('location-input')) {
+                if (window.google && mapsAvailable) {
+                    initMapWidget(); 
+                } else {
+                    window.gm_authFailure();
+                }
+                const inp = document.getElementById('location-input');
+                if (inp && inp.value) userLocation.address = inp.value;
+            }
+        }, 100);
     }
 
     function removeFromCart(id) { cart = cart.filter(x => x.id !== id); updateCartCount(); renderCart(); }
