@@ -1,0 +1,8 @@
+{
+  "name": "dessert-shop-root",
+  "version": "1.0.0",
+  "description": "Root configuration for easier execution",
+  "scripts": {
+    "start": "cd backend && node server.js"
+  }
+}

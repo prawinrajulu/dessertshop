@@ -157,14 +157,14 @@
 <div class="toast" id="toast"></div>
 
 <script>
-    const API_URL = 'http://localhost:5000/api';
+    const API_URL = 'http://localhost:5001/api';
     
     let currentUser = null;
     let isAdmin = false;
     let cart = [];
     let currentFilter = 'all';
     let selectedPayment = 'online';
-    let userLocation = { address: 'Chennai, Tamil Nadu', lat: 13.0827, lng: 80.2707 };
+    let userLocation = { address: '', lat: 13.0827, lng: 80.2707 };
     let mapInstance = null;
     let marker = null;
 
@@ -195,34 +195,57 @@
         }, 1200);
     });
 
-    window.initMapGlobal = function() { if (document.getElementById('map-preview')) initMapWidget(); };
+    window.gm_authFailure = function() {
+        console.warn('Google Maps API failed to authenticate. Switching to manual address entry.');
+        const mapDiv = document.getElementById('map-preview');
+        if (mapDiv) {
+            mapDiv.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-dim);font-size:0.8rem;text-align:center;padding:1rem;background:var(--bg);border:1px dashed var(--gold-dim);border-radius:8px;">Map preview unavailable.<br>Please enter address manually below.</div>';
+        }
+    };
+
+    window.initMapGlobal = function() { 
+        try {
+            if (document.getElementById('map-preview')) initMapWidget();
+        } catch (e) {
+            console.error('Map initialization error:', e);
+            window.gm_authFailure();
+        }
+    };
 
     function initMapWidget() {
-        if (!window.google) return;
+        if (!window.google || !window.google.maps) {
+            window.gm_authFailure();
+            return;
+        }
         const mapDiv = document.getElementById('map-preview');
         if (!mapDiv) return;
-        mapInstance = new google.maps.Map(mapDiv, { center: userLocation, zoom: 12 });
-        marker = new google.maps.Marker({ position: userLocation, map: mapInstance, draggable: true });
-        marker.addListener('dragend', () => {
-            const pos = marker.getPosition();
-            userLocation.lat = pos.lat();
-            userLocation.lng = pos.lng();
-            reverseGeocode(pos.lat(), pos.lng());
-        });
-        const input = document.getElementById('location-input');
-        if (input) {
-            const autocomplete = new google.maps.places.Autocomplete(input, { types: ['geocode'] });
-            autocomplete.addListener('place_changed', () => {
-                const place = autocomplete.getPlace();
-                if (place.geometry) {
-                    userLocation.lat = place.geometry.location.lat();
-                    userLocation.lng = place.geometry.location.lng();
-                    userLocation.address = place.formatted_address;
-                    mapInstance.setCenter(place.geometry.location);
-                    marker.setPosition(place.geometry.location);
-                    input.value = userLocation.address;
-                }
+        try {
+            mapInstance = new google.maps.Map(mapDiv, { center: userLocation, zoom: 12 });
+            marker = new google.maps.Marker({ position: userLocation, map: mapInstance, draggable: true });
+            marker.addListener('dragend', () => {
+                const pos = marker.getPosition();
+                userLocation.lat = pos.lat();
+                userLocation.lng = pos.lng();
+                reverseGeocode(pos.lat(), pos.lng());
             });
+            const input = document.getElementById('location-input');
+            if (input) {
+                const autocomplete = new google.maps.places.Autocomplete(input, { types: ['geocode'] });
+                autocomplete.addListener('place_changed', () => {
+                    const place = autocomplete.getPlace();
+                    if (place.geometry) {
+                        userLocation.lat = place.geometry.location.lat();
+                        userLocation.lng = place.geometry.location.lng();
+                        userLocation.address = place.formatted_address;
+                        mapInstance.setCenter(place.geometry.location);
+                        marker.setPosition(place.geometry.location);
+                        input.value = userLocation.address;
+                    }
+                });
+            }
+        } catch (err) {
+            console.error('Maps initialization failed', err);
+            window.gm_authFailure();
         }
     }
 
@@ -351,7 +374,23 @@
         const totalQty = cart.reduce((s, i) => s + i.qty, 0);
         if (totalQty < 4) { listDiv.innerHTML = `<div class="empty-cart" style="color: var(--orange);">Minimum 4 pieces required. Currently ${totalQty} pieces.</div>`; footer.innerHTML = ''; return; }
         listDiv.innerHTML = cart.map(item => `<div class="cart-item"><span>${item.name} x ${item.qty}</span><span>₹${item.price * item.qty}</span><button style="background:none;border:none;color:var(--red);cursor:pointer;" onclick="removeFromCart('${item.id}')">X</button></div>`).join('');
-        footer.innerHTML = `<div class="location-picker"><input id="location-input" placeholder="Your delivery address in Chennai" value="${userLocation.address || 'Chennai'}"><div id="map-preview" style="height:160px;"></div></div><div class="payment-options"><div class="pay-option ${selectedPayment === 'online' ? 'selected' : ''}" onclick="setPayment('online')">Pay Online (UPI/Razorpay)</div><div class="pay-option ${selectedPayment === 'cod' ? 'selected' : ''}" onclick="setPayment('cod')">Cash on Delivery</div></div><div class="cart-total"><span>Subtotal</span><span>₹${subtotal}</span></div><div class="cart-total"><span>Delivery</span><span>₹30</span></div><div class="cart-total"><span>Total</span><span>₹${total}</span></div><button class="btn-gold" onclick="placeOrder()">${selectedPayment === 'online' ? 'Pay with Razorpay' : 'Place Order (COD)'}</button>`;
+        footer.innerHTML = `
+            <div class="location-picker">
+                <label style="display:block;font-size:0.7rem;color:var(--gold);margin-bottom:0.5rem;text-transform:uppercase;letter-spacing:1px;">Delivery Address (Required)*</label>
+                <input id="location-input" placeholder="Enter your full delivery address in Chennai" value="${userLocation.address || ''}">
+                <div id="map-preview" style="height:160px;"></div>
+            </div>
+            <div class="payment-options">
+                <div class="pay-option ${selectedPayment === 'online' ? 'selected' : ''}" onclick="setPayment('online')">Pay Online</div>
+                <div class="pay-option ${selectedPayment === 'cod' ? 'selected' : ''}" onclick="setPayment('cod')">Cash on Delivery</div>
+            </div>
+            <div class="cart-total"><span>Subtotal</span><span>₹${subtotal}</span></div>
+            <div class="cart-total"><span>Delivery</span><span>₹30</span></div>
+            <div class="cart-total"><span>Total</span><span>₹${total}</span></div>
+            <button class="btn-gold" id="place-order-btn" onclick="placeOrder()">
+                ${selectedPayment === 'online' ? 'Proceed to Pay ₹' + total : 'Confirm COD Order ₹' + total}
+            </button>
+        `;
         setTimeout(() => { if (document.getElementById('location-input') && window.google) { initMapWidget(); const inp = document.getElementById('location-input'); if (inp.value) userLocation.address = inp.value; } }, 100);
     }
 
@@ -360,8 +399,19 @@
     async function placeOrder() {
         const totalQty = cart.reduce((s, i) => s + i.qty, 0);
         if (totalQty < 4) { toast('Minimum 4 brownie pieces required', 'error'); return; }
-        const address = document.getElementById('location-input')?.value.trim();
-        if (!address) { toast('Please enter delivery address', 'error'); return; }
+        
+        const addressInput = document.getElementById('location-input');
+        const address = addressInput ? addressInput.value.trim() : '';
+        
+        if (!address || address === 'Chennai' || address.length < 10) { 
+            toast('Please enter a specific delivery address', 'error'); 
+            if (addressInput) addressInput.style.borderColor = 'var(--red)';
+            return; 
+        }
+        
+        const btn = document.getElementById('place-order-btn');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<span class="loading-spinner"></span>Processing...'; }
+
         userLocation.address = address;
         const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0);
         const total = subtotal + 30;

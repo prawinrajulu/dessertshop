@@ -9,10 +9,16 @@ require('dotenv').config();
 const app = express();
 
 // Middleware
+app.use(express.json());
+app.use(cors());
+
+// Logging middleware
 app.use((req, res, next) => {
     console.log(`${req.method} ${req.url}`);
     next();
 });
+
+// Static paths
 app.use(express.static(path.join(__dirname, '../frontend')));
 app.use('/brownie', express.static(path.join(__dirname, '../brownie')));
 
@@ -44,18 +50,28 @@ const writeOrders = (orders) => {
 
 // API Routes
 
-// Create order and Razorpay payment
+// Helper to validate order payload
+const validateOrderData = (data) => {
+    const required = ['customerName', 'customerPhone', 'items', 'total', 'location'];
+    for (const field of required) {
+        if (!data[field]) return `Missing required field: ${field}`;
+    }
+    if (!Array.isArray(data.items) || data.items.length === 0) return 'Cart cannot be empty';
+    return null;
+};
+
+// Create order
 app.post('/api/create-order', async (req, res) => {
     try {
         const { amount, currency = 'INR', receipt } = req.body;
         
         const options = {
-            amount: amount * 100, // Razorpay expects amount in paise
+            amount: amount * 100, // paise
             currency,
             receipt: receipt || 'receipt_' + Date.now(),
             payment_capture: 1
         };
-        
+
         const order = await razorpay.orders.create(options);
         res.json({
             success: true,
@@ -70,7 +86,7 @@ app.post('/api/create-order', async (req, res) => {
     }
 });
 
-// Verify payment and save order
+// Verify payment
 app.post('/api/verify-payment', async (req, res) => {
     try {
         const {
@@ -79,18 +95,17 @@ app.post('/api/verify-payment', async (req, res) => {
             razorpay_signature,
             orderDetails
         } = req.body;
-        
-        // Verify signature
-        const body = razorpay_order_id + '|' + razorpay_payment_id;
+
+        const validationError = validateOrderData(orderDetails);
+        if (validationError) return res.status(400).json({ success: false, error: validationError });
+
+        const body = razorpay_order_id + "|" + razorpay_payment_id;
         const expectedSignature = crypto
             .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
-            .update(body.toString())
+            .update(body)
             .digest('hex');
-        
-        const isAuthentic = expectedSignature === razorpay_signature;
-        
-        if (isAuthentic) {
-            // Save order to database
+
+        if (expectedSignature === razorpay_signature) {
             const orders = readOrders();
             const newOrder = {
                 id: 'ORD' + Date.now(),
@@ -103,7 +118,7 @@ app.post('/api/verify-payment', async (req, res) => {
             };
             orders.unshift(newOrder);
             writeOrders(orders);
-            
+
             res.json({
                 success: true,
                 message: 'Payment verified and order placed',
@@ -118,42 +133,45 @@ app.post('/api/verify-payment', async (req, res) => {
     }
 });
 
-// Get all orders (Admin)
+// Get all orders
 app.get('/api/orders', (req, res) => {
     const orders = readOrders();
     res.json({ success: true, orders });
 });
 
-// Update order status (Admin)
+// Update order status
 app.put('/api/orders/:orderId/status', (req, res) => {
     const { orderId } = req.params;
     const { status } = req.body;
-    
+
     const orders = readOrders();
-    const orderIndex = orders.findIndex(o => o.id === orderId);
-    
-    if (orderIndex !== -1) {
-        orders[orderIndex].status = status;
-        orders[orderIndex].updatedAt = new Date().toISOString();
+    const index = orders.findIndex(o => o.id === orderId);
+
+    if (index !== -1) {
+        orders[index].status = status;
+        orders[index].updatedAt = new Date().toISOString();
         writeOrders(orders);
-        res.json({ success: true, order: orders[orderIndex] });
+        res.json({ success: true, order: orders[index] });
     } else {
         res.status(404).json({ success: false, error: 'Order not found' });
     }
 });
 
-// Get orders by phone number (Customer)
+// Get orders by phone
 app.get('/api/orders/:phone', (req, res) => {
     const { phone } = req.params;
     const orders = readOrders();
-    const userOrders = orders.filter(o => o.customerPhone === phone);
-    res.json({ success: true, orders: userOrders });
+    const filtered = orders.filter(o => o.customerPhone === phone);
+    res.json({ success: true, orders: filtered });
 });
 
-// Save COD order
+// COD order
 app.post('/api/cod-order', (req, res) => {
     try {
         const orderDetails = req.body;
+        const validationError = validateOrderData(orderDetails);
+        if (validationError) return res.status(400).json({ success: false, error: validationError });
+
         const orders = readOrders();
         const newOrder = {
             id: 'ORD' + Date.now(),
@@ -164,10 +182,10 @@ app.post('/api/cod-order', (req, res) => {
         };
         orders.unshift(newOrder);
         writeOrders(orders);
-        
+
         res.json({
             success: true,
-            message: 'COD order placed successfully',
+            message: 'COD order placed',
             orderId: newOrder.id
         });
     } catch (error) {
@@ -175,29 +193,22 @@ app.post('/api/cod-order', (req, res) => {
     }
 });
 
-// Get revenue stats (Admin)
+// Stats
 app.get('/api/stats', (req, res) => {
     const orders = readOrders();
-    const totalOrders = orders.length;
-    const pendingOrders = orders.filter(o => o.status === 'pending').length;
-    const totalRevenue = orders.reduce((sum, o) => sum + o.total, 0);
-    const paidRevenue = orders
-        .filter(o => o.paymentStatus === 'paid')
-        .reduce((sum, o) => sum + o.total, 0);
-    
-    res.json({
-        success: true,
-        stats: {
-            totalOrders,
-            pendingOrders,
-            totalRevenue,
-            paidRevenue
-        }
-    });
+    const stats = {
+        totalOrders: orders.length,
+        pendingOrders: orders.filter(o => o.status === 'pending').length,
+        totalRevenue: orders.reduce((sum, o) => sum + (o.total || 0), 0),
+        paidRevenue: orders
+            .filter(o => o.paymentStatus === 'paid')
+            .reduce((sum, o) => sum + (o.total || 0), 0)
+    };
+    res.json({ success: true, stats });
 });
 
 // Start server
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
