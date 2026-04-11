@@ -64,7 +64,7 @@ const validateOrderData = (data) => {
 app.post('/api/create-order', async (req, res) => {
     try {
         const { amount, currency = 'INR', receipt } = req.body;
-        
+
         const options = {
             amount: amount * 100, // paise
             currency,
