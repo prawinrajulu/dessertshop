@@ -160,6 +160,11 @@
             margin-bottom: 0.4rem;
         }
 
+        #place-order-btn {
+            position: relative;
+            z-index: 10;
+        }
+
         .form-group input {
             width: 100%;
             padding: 0.75rem 1rem;
@@ -456,6 +461,8 @@
         .cart-footer {
             padding: 1.2rem 1.5rem;
             border-top: 1px solid #2a2010;
+            position: relative;
+            z-index: 5;
         }
 
         .location-picker {
@@ -479,6 +486,7 @@
             height: 160px;
             background: #2a241a;
             border-radius: 8px;
+            z-index: 1;
         }
 
         .payment-options {
@@ -931,7 +939,7 @@
             <div class="cart-total"><span>Subtotal</span><span>₹${subtotal}</span></div>
             <div class="cart-total"><span>Delivery</span><span>₹30</span></div>
             <div class="cart-total"><span>Total</span><span>₹${total}</span></div>
-            <button class="btn-gold" id="place-order-btn" onclick="placeOrder()">
+            <button class="btn-gold" id="place-order-btn" onclick="placeOrder()" style="height:40px;width:100px" padding: 12px; font-size: 14px;">
                 ${selectedPayment === 'online' ? 'Proceed to Pay ₹' + total : 'Confirm COD Order ₹' + total}
             </button>
         `;
